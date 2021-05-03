@@ -1,3 +1,4 @@
+import json
 import requests
 from requests.auth import HTTPBasicAuth
 import nltk
@@ -29,25 +30,51 @@ def api_call(token, resource=''):
   response = requests.get(f'{config.API_URL}{resource}', headers=headers)
   return response.json()
 
+def enrich_data(price, sentiment):
+  time = price['time']['updatedISO']
+  current_price = price['bpi']['USD']['rate']
+
+  return {  
+            "time": time, 
+            "price": current_price, 
+            "positive_avg": sentiment['positive_avg'],
+            "neutral_avg": sentiment['neutral_avg'] ,
+            "negative_avg": sentiment['negative_avg'],
+            "compund_avg": sentiment['compound_avg']  
+          }  
+
+def get_bitcoin_price():
+  response = requests.get("https://api.coindesk.com/v1/bpi/currentprice.json")
+  return response.json()
+
 def analyze_sentiment(posts):
   sia = SentimentIntensityAnalyzer()
-  scores = list(map(lambda post: sia.polarity_scores(post['data']['selftext']), posts))
+  scores = list(map(lambda post: sia.polarity_scores(post), posts)) 
 
-  print(scores)
+  filteredScores = list(filter(lambda score: score['compound'] != 0 and score['pos'] != 0 and score['neg'] != 0 and score['neu'] != 0, scores))
+  length = len(filteredScores)
 
-  positive_sum = sum(p['pos'] for p in scores)
-  neutral_sum = sum(p['neu'] for p in scores)
-  negative_sum = sum(p['neg'] for p in scores)
+  positive_avg = sum(p['pos'] for p in scores) / length
+  neutral_avg = sum(p['neu'] for p in scores) / length
+  negative_avg = sum(p['neg'] for p in scores) / length
+  compound_avg = sum(p['compound'] for p in scores) / length
   
-  print(f'positive sum: {positive_sum}')
-  print(f'neutral sum: {neutral_sum}')
-  print(f'negative sum: {negative_sum}')
+  return { "positive_avg": positive_avg, "neutral_avg":neutral_avg, "negative_avg":negative_avg, "compound_avg":compound_avg }
 
 def main():
+  #Get Bitcoin price
+  price = get_bitcoin_price()
+
+  #Get sentiment
+  SUBREDDIT = '/r/cryptocurrency/top?limit=100'
   access_token = authenticate()
-  data = api_call(access_token, '/r/bitcoin/top?limit=100')
-  posts = data['data']['children']
-  analyze_sentiment(posts)
+  data = api_call(access_token, SUBREDDIT)
+  posts = (d['data']['selftext'] for d in data['data']['children']) 
+  sentiment = analyze_sentiment(posts)
+
+  #Combine data
+  transformed_data = enrich_data(price, sentiment)
+  print(transformed_data)
 
 if __name__ == '__main__':
   main()
